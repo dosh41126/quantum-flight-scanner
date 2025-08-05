@@ -48,6 +48,7 @@ import os
 from statistics import mean
 import json
 import string
+from flask_wtf.csrf import CSRFError   
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -61,7 +62,21 @@ console_handler.setFormatter(formatter)
 logger.addHandler(console_handler)
 
 app = Flask(__name__)
+_PUBLIC_ENDPOINTS = {
+    "home", "index", "login", "register", "static",   # keep unauth pages here
+}
 
+@app.before_request
+def _require_login_for_private_paths():
+    if request.endpoint is None:        # ignore 404 etc.
+        return
+    if request.endpoint.split(".")[0] in _PUBLIC_ENDPOINTS:
+        return                          # public → allowed
+    if session.get("username"):
+        return                          # valid session → allowed
+    session.clear()                     # wipe any stale cookie
+    return redirect(url_for("login", next=request.url))
+    
 SECRET_KEY = os.getenv("INVITE_CODE_SECRET_KEY")
 if not SECRET_KEY:
     raise ValueError("SECRET_KEY environment variable is not defined!")
@@ -116,6 +131,12 @@ app.config.update(
 
 csrf = CSRFProtect(app)
 
+@app.errorhandler(CSRFError)
+def _handle_csrf_error(err):
+    flash("Session expired — please sign in again.", "warning")
+    session.clear()
+    return redirect(url_for("login", next=request.url))
+    
 @app.after_request
 def apply_csp(response):
     csp_policy = (
