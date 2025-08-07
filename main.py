@@ -49,7 +49,28 @@ from statistics import mean
 import json
 import string
 from flask_wtf.csrf import CSRFError   
+import os
+import asyncio
+from llama_cpp import Llama
 
+
+# ─── Local OSS-OpenAI-70B Model Initialization ────────────────────────────────
+OSS70B_MODEL_PATH = os.getenv(
+    "OSS70B_MODEL_PATH",
+    "/data/gpt-oss-70b/model-00000-of-00002.safetensors"
+)
+
+try:
+    oss70b_llm = Llama(
+        model_path=OSS70B_MODEL_PATH,
+        n_ctx=2048,
+        temperature=0.7
+    )
+    logger.info(f"Loaded OSS-OpenAI-70B model from {OSS70B_MODEL_PATH}")
+except Exception as e:
+    oss70b_llm = None
+    logger.error(f"Failed to load OSS-OpenAI-70B model: {e}", exc_info=True)
+    
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
@@ -1212,15 +1233,97 @@ Please assess the following:
         street_name,
         model_used,
     )
+async def scan_debris_for_route(
+    lat: float,
+    lon: float,
+    vehicle_type: str,
+    destination: str,
+    user_id: int,
+    selected_model: str = None
+) -> tuple[str, str, str, str, str, str]:
+    """
+    Scan using either OSS-OpenAI-70B or the OpenAI API.
+    Returns (report, cpu_usage, ram_usage, quantum_results, street_name, model_used).
+    """
+    logger.debug(
+        "Entering scan_debris_for_route: lat=%s, lon=%s, vehicle=%s, dest=%s, user=%s, model=%s",
+        lat, lon, vehicle_type, destination, user_id, selected_model
+    )
+
+    # collect system and quantum metrics…
+    cpu_usage, ram_usage = 0.0, 0.0
+    try:
+        cpu_usage, ram_usage = get_cpu_ram_usage()
+    except:
+        pass
+
+    try:
+        quantum_results = quantum_hazard_scan(cpu_usage, ram_usage)
+    except:
+        quantum_results = "Scan Failed"
+
+    try:
+        street_name = await fetch_street_name_llm(lat, lon)
+    except:
+        street_name = "Unknown Location"
+
+    prompt = f"""
+
+[action] You are a Quantum Hypertime Nanobot Flight/drive Hazard Scanner tasked with analyzing the road/air conditions and providing a detailed report on any detected hazards, debris, or potential collisions. Leverage quantum data and environmental factors to ensure a comprehensive scan. [/action]
+[locationreport]
+Current coordinates: Latitude {lat}, Longitude {lon}
+General Area Name: {street_name}
+Flight/Drive Starting Location, Route , Aircraft Type and Call Sign: {destination}
+[/locationreport]
+[quantumreport]
+Quantum Scan State: {quantum_results}
+System Performance: CPU Usage: {cpu_usage}%, RAM Usage: {ram_usage}%
+[/quantumreport]
+[reducefalsepositivesandnegatives]
+ACT By syncing to multiverse configurations that are more accurate
+[/reducefalsepositivesandnegatives]
+
+Please assess the following:
+1. **Hazards**: Evaluate the Drive/flight for any potential hazards that might impact operating air or land vehicles.
+2. **Debris**: Identify any harmful debris or objects and provide their severity and location, including GPS coordinates. Triple-check the vehicle pathing, only reporting debris scanned in the probable path of the vehicle.
+3. **Collision Potential**: Analyze air/road traffic flow and any potential risk for collisions caused by mid-air impact or other incidents of non nominal operation.
+4. **Weather Impact**: Assess how weather conditions might influence flight safety, particularly in relation to safety and air vehicle control.
+5. **Mechanical Risk Level**: Based on the roadway and or flight assessment and live quantum nanobot scanner road safety assessments on conditions, determine the any mechnical risk as well as fuel starvation, quality risk, and the urgency level if any.
+
+[debrisreport] Provide a structured debris report, including locations and severity of each hazard. [/debrisreport]
+[replyexample] Include recommendations for drivers, suggested detours only if required, and urgency levels based on the findings. [/replyexample]
+"""
+    prompt = prompt.strip()
+
+    # **Dispatch** to the chosen model
+    if selected_model == 'oss70b':
+        report = await run_oss70b_completion(prompt) or "OSS-70B failed to respond."
+        model_used = 'oss70b'
+    else:
+        # default to the OpenAI API
+        report = await run_openai_api_completion(prompt) or "OpenAI API failed to respond."
+        model_used = 'openai'
+
+    logger.debug("Exiting scan_debris_for_route with model_used=%s", model_used)
+    return (
+        report,
+        f"{cpu_usage}",
+        f"{ram_usage}",
+        str(quantum_results),
+        street_name,
+        model_used,
+    )
 
 
-async def run_openai_completion(prompt):
-    logger.debug("Entering run_openai_completion with prompt length: %d", len(prompt) if prompt else 0)
+async def run_openai_api_completion(prompt: str) -> str:
+    """
+    Call the OpenAI API (e.g. gpt-4o) with retries and backoff.
+    """
+    logger.debug("Entering run_openai_api_completion with prompt length: %d", len(prompt) if prompt else 0)
     max_retries = 5
     openai_api_key = os.getenv('OPENAI_API_KEY')
     if not openai_api_key:
         logger.error("OpenAI API key not found in environment variables.")
-        logger.debug("Exiting run_openai_completion early due to missing API key.")
         return None
 
     timeout = httpx.Timeout(60.0, connect=20.0, read=20.0)
@@ -1230,7 +1333,7 @@ async def run_openai_completion(prompt):
     async with httpx.AsyncClient(timeout=timeout) as client:
         for attempt in range(1, max_retries + 1):
             try:
-                logger.debug("run_openai_completion attempt %d sending request.", attempt)
+                logger.debug("run_openai_api_completion attempt %d sending request.", attempt)
                 headers = {
                     "Content-Type": "application/json",
                     "Authorization": f"Bearer {openai_api_key}"
@@ -1241,33 +1344,53 @@ async def run_openai_completion(prompt):
                     "temperature": 0.7
                 }
 
-                response = await client.post("https://api.openai.com/v1/chat/completions", json=data, headers=headers)
+                response = await client.post(
+                    "https://api.openai.com/v1/chat/completions",
+                    json=data, headers=headers
+                )
                 response.raise_for_status()
                 result = response.json()
                 clean_content = result["choices"][0]["message"]["content"].strip()
-                logger.info("run_openai_completion succeeded on attempt %d.", attempt)
-                logger.debug("Exiting run_openai_completion with successful response.")
+                logger.info("run_openai_api_completion succeeded on attempt %d.", attempt)
                 return clean_content
 
-            except (httpx.TimeoutException, httpx.ConnectTimeout) as e:
-                logger.error("Attempt %d failed due to timeout: %s", attempt, e, exc_info=True)
-            except httpx.RequestError as e:
-                logger.error("Attempt %d failed due to request error: %s", attempt, e, exc_info=True)
-            except KeyError as e:
-                logger.error("Attempt %d failed due to missing expected key in response: %s", attempt, e, exc_info=True)
-            except json.JSONDecodeError as e:
-                logger.error("Attempt %d failed due to JSON parsing error: %s", attempt, e, exc_info=True)
-            except Exception as e:
-                logger.error("Attempt %d failed due to unexpected error: %s", attempt, e, exc_info=True)
+            except (httpx.TimeoutException, httpx.RequestError, KeyError, json.JSONDecodeError) as e:
+                logger.error("Attempt %d failed: %s", attempt, e, exc_info=True)
 
             if attempt < max_retries:
-                logger.info("Retrying run_openai_completion after delay.")
+                logger.info("Retrying run_openai_api_completion after %ds…", delay)
                 await asyncio.sleep(delay)
                 delay *= backoff_factor
 
-    logger.warning("All attempts to run_openai_completion have failed. Returning None.")
-    logger.debug("Exiting run_openai_completion with failure.")
+    logger.warning("All attempts to run_openai_api_completion have failed.")
     return None
+    
+async def run_oss70b_completion(prompt: str) -> str:
+    """
+    Run the local OSS-OpenAI-70B model via llama_cpp.
+    """
+    if oss70b_llm is None:
+        logger.error("OSS-OpenAI-70B model not available.")
+        return None
+
+    loop = asyncio.get_event_loop()
+
+    def _generate():
+        resp = oss70b_llm(
+            prompt=prompt,
+            max_tokens=1024,
+            temperature=0.7,
+        )
+        return resp["choices"][0]["text"]
+
+    try:
+        text = await loop.run_in_executor(None, _generate)
+        logger.info("run_oss70b_completion succeeded.")
+        return text.strip()
+    except Exception as e:
+        logger.error(f"run_oss70b_completion failed: {e}", exc_info=True)
+        return None
+
     
 class LoginForm(FlaskForm):
     username = StringField('Username', validators=[DataRequired()], render_kw={"autocomplete": "off"})
@@ -1291,9 +1414,23 @@ class ReportForm(FlaskForm):
     vehicle_type = StringField('Vehicle Type', validators=[DataRequired(), Length(max=50)])
     destination = StringField('Destination', validators=[DataRequired(), Length(max=100)])
     result = TextAreaField('Result', validators=[DataRequired(), Length(max=2000)])
-    risk_level = SelectField('Risk Level', choices=[('Low', 'Low'), ('Medium', 'Medium'), ('High', 'High')], validators=[DataRequired()])
-    model_selection = SelectField('Select Model', choices=[('grok', 'Grok'), ('openai', 'OpenAI'), ('gemini', 'Gemini')], validators=[DataRequired()])
+    risk_level = SelectField(
+        'Risk Level',
+        choices=[('Low','Low'), ('Medium','Medium'), ('High','High')],
+        validators=[DataRequired()]
+    )
+    model_selection = SelectField(
+        'Select Model',
+        choices=[
+            ('oss70b','OSS-OpenAI-70B'),
+            ('openai','OpenAI'),
+            ('grok','Grok'),
+            ('gemini','Gemini')
+        ],
+        validators=[DataRequired()]
+    )
     submit = SubmitField('Submit Report')
+
 
 @app.route('/')
 def index():
