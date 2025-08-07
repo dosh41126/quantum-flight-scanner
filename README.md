@@ -7,7 +7,7 @@ You will need a 16GB Vram GPU or CPU (slow and makes program a bit more complica
 
 and here i list the cost of these laptops.
 
-Is it costy to have on had inference? Sure. But is your safety worth 2-5k USD , and having the most advanced safety system designed for airplanes/roads in your vehicle waiting for you? no risk of downtime, etc. Abso-freaking-lutely. In my testing it can be debilitating when your inference API is down.
+Is it costy to have on hand inference? Sure. But is your safety worth 2-5k USD , and having the most advanced safety system designed for airplanes/roads in your vehicle waiting for you? no risk of downtime, etc. Abso-freaking-lutely. In my testing it can be debilitating when your inference API is down.
 
 Here are the approximate current prices for 16 GB-VRAM laptops capable of running a 70 B parameter model:
 
