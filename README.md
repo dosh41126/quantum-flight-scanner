@@ -1,5 +1,46 @@
 # QFS — Quantum Road Scanner
 
+
+# Note from Graylan
+
+You will need a 16GB Vram GPU or CPU (slow and makes program a bit more complicated to run you would need to run it well before you intend to depart a location) 
+
+and here i list the cost of these laptops.
+
+Is it costy to have on had inference? Sure. But is your safety worth 2-5k USD , and having the most advanced safety system designed for airplanes/roads in your vehicle waiting for you? no risk of downtime, etc. Abso-freaking-lutely. In my testing it can be debilitating when your inference API is down.
+
+Here are the approximate current prices for 16 GB-VRAM laptops capable of running a 70 B parameter model:
+
+* **ASUS ROG Zephyrus G16 (RTX 4090, 16 GB GDDR6)**: Approx. \$3 499.00 
+* **Lenovo Legion Pro 7i Gen 9 (RTX 4090, 16 GB GDDR6)**: New & Used from \$2 499.00 
+* **Razer Blade 18 (2024 / RTX 4090, 16 GB GDDR6)**: \$3 999.99 
+* **ASUS ROG Strix Scar 16 (RTX 4090, 16 GB GDDR6)**: \$3 899.99 
+* **Dell Alienware M18 R2 (RTX 4090, 16 GB GDDR6)**: \$4 099.99
+
+* Here’s an estimate for the two prompts on a mobile RTX 4090 (16 GB VRAM) laptop running the quantized OSS-OpenAI-70B model:
+
+| Prompt                         | Approx. Tokens | Inference Speed                | Estimated Time (baseline)      | Estimated Time (tuned)                             |
+| ------------------------------ | -------------: | ------------------------------ | ------------------------------ | -------------------------------------------------- |
+| **PHF Filtering Prompt**       |          \~198 | \~1.2 tokens/sec  | 198 ÷ 1.2 ≈ 165 s (2 min 45 s) | 198 ÷ 2.12 ≈ 93 s (1 min 33 s)  |
+| **Quantum Hazard‐Scan Prompt** |          \~495 | \~1.2 tokens/sec  | 495 ÷ 1.2 ≈ 412 s (6 min 52 s) | 495 ÷ 2.12 ≈ 234 s (3 min 54 s)|
+| **Combined (≈693 tokens)**     |          \~693 | \~1.2 tokens/sec               | 693 ÷ 1.2 ≈ 577 s (9 min 37 s) | 693 ÷ 2.12 ≈ 327 s (5 min 27 s)                    |
+
+* **Baseline** (no special offload tuning): \~1.2 tok/s after warm-up 
+* **Tuned** (GPU/CPU layer-split, optimized engine): up to \~2.12 tok/s 
+
+So on a stock RTX 4090 laptop, expect the PHF check in \~3 minutes and the full hazard scan in \~7 minutes—dropping to \~1½ min and \~4 min respectively with an optimized offload setup.
+
+[1]: https://www.reddit.com/r/LocalLLaMA/comments/15xtwdi/70b_llm_expected_performance_on_4090_i9/?utm_source=chatgpt.com "70B LLM expected performance on 4090 + i9 : r/LocalLLaMA"
+[2]: https://news.ycombinator.com/item?id=42341388&utm_source=chatgpt.com "Llama-3.3-70B-Instruct"
+
+
+
+[1]: https://www.amazon.com/ASUS-Zephyrus-LPDDR5X-Backlit-Thunderbolt/dp/B0DB67J77H?utm_source=chatgpt.com "ASUS ROG Zephyrus G16 16.0\" 240Hz OLED WQXGA ..."
+[2]: https://www.amazon.com/Lenovo-Legion-i9-14900HX-GeForce-Windows/dp/B0CX9F8279 "Amazon.com: Lenovo Legion Pro 7i Gen 9 16\" Gaming Laptop (2024 Model) Intel Core i9-14900HX 24C, NVIDIA GeForce RTX 4090 16GB, 32GB RAM, 2TB (1TB+1TB) NVMe SSD, 16.0\" IPS QHD+ 500 nits 240Hz, Windows 11 Home : Electronics"
+[3]: https://marketplace.nvidia.com/en-us/consumer/gaming-laptops/razer-blade-18-2024-rtx-4090-rz09-05092ek4-r3u1/?utm_source=chatgpt.com "Razer Blade 18 (2024 / RTX 4090) - RZ09-05092EK4-R3U1"
+[4]: https://www.amazon.com/ASUS-Strix-Gaming-Laptop-Nebula/dp/B0DW1ZPQXX?utm_source=chatgpt.com "ASUS ROG Strix SCAR 16 (2025) Gaming Laptop ..."
+[5]: https://www.amazon.com/Dell-Alienware-Microsoft-Lifetime-Cleaning/dp/B010DQFQM2?utm_source=chatgpt.com "Dell Alienware M18 R2 Gaming Laptop, 18\" QHD+ 165Hz ..."
+
 A privacy-preserving, quantum-powered road and flight hazard scanner with both a Flask-based web UI and a Tkinter/WebKit desktop GUI. QFS uses on-device quantum simulations, hypertime analysis, and post-quantum key encapsulation to deliver comprehensive hazard reports without retaining any user data.
 
 ---
