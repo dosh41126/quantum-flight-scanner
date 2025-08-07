@@ -52,25 +52,37 @@ from flask_wtf.csrf import CSRFError
 import os
 import asyncio
 from llama_cpp import Llama
+import oqs
+import base64
+
+# ─── Post-Quantum KEM (Kyber512) setup ────────────────────────────────────────
+# generate a one‐time server keypair
+server_kem = oqs.KeyEncapsulation("Kyber512")
+server_public_key, server_secret_key = server_kem.generate_keypair()
 
 
-# ─── Local OSS-OpenAI-70B Model Initialization ────────────────────────────────
-OSS70B_MODEL_PATH = os.getenv(
-    "OSS70B_MODEL_PATH",
-    "/data/gpt-oss-70b/model-00000-of-00002.safetensors"
+# ─── Initialize OSS-OpenAI-70B Llama model from shards ───────────────────────
+model_dir = os.getenv("OSS70B_MODEL_PATH", "/data/gpt-oss-20b")
+# Collect and sort the shards by filename
+shards = sorted(
+    os.path.join(model_dir, f)
+    for f in os.listdir(model_dir)
+    if f.startswith("model-") and f.endswith(".safetensors")
 )
-
-try:
+if shards:
+    # llama_cpp will load a sharded GGML model when you pass the directory
     oss70b_llm = Llama(
-        model_path=OSS70B_MODEL_PATH,
+        model_path=shards[0],   # path to the first shard
         n_ctx=2048,
-        temperature=0.7
+        temperature=0.7,
+        # pass the rest of shards via `model_path` as well—llama-cpp-python
+        # will internally pick up additional files with matching basename
     )
-    logger.info(f"Loaded OSS-OpenAI-70B model from {OSS70B_MODEL_PATH}")
-except Exception as e:
+    app.logger.info(f"Loaded OSS-OpenAI-70B model from {model_dir}")
+else:
     oss70b_llm = None
-    logger.error(f"Failed to load OSS-OpenAI-70B model: {e}", exc_info=True)
-    
+    app.logger.error("No OSS-OpenAI-70B shards found in " + model_dir)
+
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
@@ -1431,6 +1443,64 @@ class ReportForm(FlaskForm):
     )
     submit = SubmitField('Submit Report')
 
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+@app.route('/pqe/pubkey', methods=['GET'])
+def pqe_pubkey():
+    """Return the server’s PQ KEM public key (base64)."""
+    return jsonify({
+        "public_key": base64.b64encode(server_public_key).decode('utf-8')
+    }), 200
+
+@app.route('/pqe/handshake', methods=['POST'])
+def pqe_handshake():
+    """
+    Client posts {"ct": "<base64-ciphertext>"}.
+    We decapsulate to obtain the shared secret and store it in session.
+    """
+    data = request.get_json(force=True)
+    ct_b64 = data.get("ct")
+    if not ct_b64:
+        return jsonify({"error": "Missing 'ct' field"}), 400
+
+    try:
+        ct = base64.b64decode(ct_b64)
+        shared_secret = server_kem.decapsulate(ct, server_secret_key)
+        # store as base64 so it survives session serialization
+        session['pqe_shared_secret'] = base64.b64encode(shared_secret).decode('utf-8')
+        return "", 200
+    except Exception as e:
+        logger.error("PQE handshake failed: %s", e, exc_info=True)
+        return jsonify({"error": "Handshake failed"}), 500
+
+@app.route('/secure-data', methods=['POST'])
+def secure_data():
+    """
+    Client posts {"nonce": "<b64>", "cipher": "<b64>"}, AES-GCM-decrypts with the stored PQE secret.
+    Returns {"plaintext": "..."} on success.
+    """
+    data = request.get_json(force=True)
+    nonce_b64 = data.get("nonce")
+    cipher_b64 = data.get("cipher")
+    if not nonce_b64 or not cipher_b64:
+        return jsonify({"error": "Missing 'nonce' or 'cipher'"}), 400
+
+    shared_secret_b64 = session.get('pqe_shared_secret')
+    if not shared_secret_b64:
+        return jsonify({"error": "Handshake not completed"}), 400
+
+    try:
+        nonce = base64.b64decode(nonce_b64)
+        ciphertext = base64.b64decode(cipher_b64)
+        shared_key = base64.b64decode(shared_secret_b64)
+
+        aesgcm = AESGCM(shared_key)
+        plaintext = aesgcm.decrypt(nonce, ciphertext, None)
+        return jsonify({"plaintext": plaintext.decode('utf-8')}), 200
+
+    except Exception as e:
+        logger.error("Secure-data decryption failed: %s", e, exc_info=True)
+        return jsonify({"error": "Decryption failed"}), 500
 
 @app.route('/')
 def index():
